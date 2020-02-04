@@ -89,7 +89,7 @@ missing.age <- titanic.train[is.na(Age),]
 nrow(titanic.train) / nrow(missing.age) # 5% missing age
 
 missing.age[, .(Missing = .N, Pct = .N / nrow(missing.age)),
-              by = Sex] # 70% male, 30% female
+            by = Sex] # 70% male, 30% female
 
 ggplot(titanic.train[Cabin != ""], aes(Cabin)) +
   geom_bar()
@@ -121,12 +121,12 @@ titanic.results <- bake(prep, new_data = test)
 # Simple Logistic Regression
 
 cv_glm <- caret::train(
-      form = Survived ~ . -PassengerId,
-      data = titanic.processed.train,
-      method = "glm",
-      family = "binomial",
-      trControl = trainControl(method = "cv",
-                               number = 10))
+  form = Survived ~ . -PassengerId,
+  data = titanic.processed.train,
+  method = "glm",
+  family = "binomial",
+  trControl = trainControl(method = "cv",
+                           number = 10))
 
 titanic.test.glm <- cbind(titanic.processed.test, 
                           predict(object = cv_glm, 
