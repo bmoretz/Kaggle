@@ -57,7 +57,7 @@ frame.test <- h2o.assign(splits[[3]], "test.survive")
 rm(splits)
 
 # 
-excluded <- c("PassengerId", "Name", "SibSp", "Ticket")
+excluded <- c("PassengerId", "Name", "SibSp")
 
 response <- "Survived"
 predictors <- setdiff(setdiff(colnames(train), response), excluded)
@@ -100,6 +100,7 @@ h2o.rf <- h2o.randomForest(
   x = predictors,
   y = response,
   training_frame = frame.train,
+  validation_frame = frame.valid,
   ntrees = n.predictors * 20,
   nfolds = 10,
   stopping_rounds = 5,
@@ -186,8 +187,12 @@ sen_spec_df %>%
 # Function for calculating CM: 
 
 my_cm_com_rf <- function(thre) {
-  du_bao_prob <- h2o.predict(h2o.rf, frame.test) %>% as.data.frame() %>% pull(predict) %>% as.factor()
-  cm <- confusionMatrix(du_bao_prob, frame.test %>% as.data.table() %>% pull(Survived) %>% as.factor())
+  du_bao_prob <- h2o.predict(best_model2, frame.test) %>% as.data.frame() %>% pull(p1)
+  du_bao <- case_when(du_bao_prob >= thre ~ 1, 
+                      du_bao_prob < thre ~ 0) %>% as.factor()
+  
+  cm <- confusionMatrix(du_bao, frame.test %>% as.data.table() %>% pull(Survived))
+  
   return(cm)
 }
 
@@ -269,13 +274,81 @@ summary(best_model)
 
 h2o.varimp_plot(best_model)
 
+#=================================
+#  Random Discrete Grid Search
+#=================================
+
+# Set random grid search criteria: 
+search_criteria_2 <- list(strategy = "RandomDiscrete",
+                          stopping_metric = "AUC",
+                          stopping_tolerance = 0.005,
+                          stopping_rounds = 10,
+                          max_runtime_secs = 30*60)
+
+# Turn parameters for RF: 
+system.time(random_grid <- h2o.grid(algorithm = "randomForest",
+                                    grid_id = "rf_grid2",
+                                    x = predictors, 
+                                    y = response, 
+                                    seed = 29, 
+                                    nfolds = 10, 
+                                    training_frame = frame.train,
+                                    hyper_params = hyper_grid.h2o,
+                                    search_criteria = search_criteria_2))
+
+# Collect the results and sort by our models: 
+grid_perf2 <- h2o.getGrid(grid_id = "rf_grid2", 
+                          sort_by = "AUC", 
+                          decreasing = FALSE)
+
+# Best RF: 
+best_model2 <- h2o.getModel(grid_perf2@model_ids[[1]])
+
+# Use this best model for prediction with some thresholds selected: 
+
+my_cm_com_rf_best2 <- function(thre) {
+  du_bao_prob <- h2o.predict(best_model2, frame.test) %>% as.data.frame() %>% pull(p1)
+  du_bao <- case_when(du_bao_prob >= thre ~ 1, 
+                      du_bao_prob < thre ~ 0) %>% as.factor()
+  
+  cm <- confusionMatrix(du_bao, frame.test %>% as.data.table() %>% pull(Survived))
+  
+  return(cm)
+}
+
+results_list_rf_best2 <- lapply(my_threshold, my_cm_com_rf_best2)
+
+vis_detection_rate_rf_best2 <- function(x) {
+  
+  results_list_rf_best2[[x]]$table %>% as.data.frame() -> m
+  rate <- round(100*m$Freq[1] / sum(m$Freq[c(1, 2)]), 2)
+  acc <- round(100*sum(m$Freq[c(1, 4)]) / sum(m$Freq), 2)
+  acc <- paste0(acc, "%")
+  
+  m %>% 
+    ggplot(aes(Reference, Freq, fill = Prediction)) +
+    geom_col(position = "fill") + 
+    scale_fill_manual(values = c("#e41a1c", "#377eb8"), name = "") + 
+    theme(panel.grid.minor.y = element_blank()) + 
+    theme(panel.grid.minor.x = element_blank()) + 
+    scale_y_continuous(labels = scales::percent) + 
+    labs(x = NULL, y = NULL, 
+         title = paste0("Detecting Survival when Threshold = ", my_threshold[x]), 
+         subtitle = paste0("Detecting Survival for Default: ", rate, "%", ", ", "Accuracy: ", acc))
+}
+
+gridExtra::grid.arrange(vis_detection_rate_rf_best2(1), 
+                        vis_detection_rate_rf_best2(2), 
+                        vis_detection_rate_rf_best2(3),
+                        vis_detection_rate_rf_best2(4))
 # RF, submission
 
-rf.pred <- h2o.predict(h2o.rf, test.h2o, type = "prob") # std
-rf.pred <- h2o.predict(best_model, test.h2o, type = "prob") # tuned
-
+rf.pred.std <- h2o.predict(h2o.rf, test.h2o, type = "prob") # std
+rf.pred.cart <- h2o.predict(best_model, test.h2o, type = "prob") # tuned cartesian
+rf.pred.rand <- h2o.predict(best_model2, test.h2o, type = "prob") # tuned random
+  
 h2o.rf.results <- data.table(PassengerId = test$PassengerId,
-                              Survived = as.vector(round(rf.pred$predict)))
+                              Survived = as.vector(round(rf.pred.rand$predict)))
 
 data.table::fwrite(h2o.glm.results, file = file.path(submission.dir, "h2o.rf.submission.csv"))
 
