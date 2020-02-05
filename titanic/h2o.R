@@ -23,7 +23,7 @@ theme_update(axis.text.x = element_text(size = 10),
 # data sets
 project <- 'titanic'
 
-data.dir <- file.path(here::here(), project, "datasets"); submission.dir <- file.path(data.dir, "submission")
+data.dir <- file.path(here::here(), project, "datasets"); submission.dir <- file.path(data.dir, "submissions")
 
 train <- data.table::fread(file.path(data.dir, "train.csv"), 
                            stringsAsFactors = T)
@@ -42,7 +42,7 @@ h2o.init(nthreads=-1, max_mem_size = "32gb")
 
 blueprint <- recipe(Survived ~ ., data = train) %>%
   step_other(all_nominal(), threshold = 0.005) %>%
-  step_dummy(Ticket)
+  step_dummy(Embarked)
 
 train_h2o <- prep(blueprint, training = train, retain = T) %>%
   juice() %>%
@@ -53,7 +53,7 @@ test_h2o <- prep(blueprint, training = train) %>%
   as.h2o()
 
 # Features
-excluded <- c("Name")
+excluded <- c("Name", "Ticket")
 
 response <- "Survived"
 predictors <- setdiff(setdiff(colnames(train_h2o), response), excluded)
@@ -67,9 +67,8 @@ n_predictors <- length(predictors)
 export_results <- function(type, h2o_model) {
   #' Generated a submission file from a h2o model.
   #'
-  #' Generates predictions from model &
-  #'
-  #' @param data.sheet the information data sheet (excel file)  
+  #' @param type model type, used to distinguish submission types.
+  #' @param h2o_model h2o model.
   model_pred <- h2o.predict(h2o_model, test_h2o, type = "prob") %>% as.data.table()
   
   results <- data.table(PassengerId = test$PassengerId,
@@ -83,6 +82,9 @@ export_results <- function(type, h2o_model) {
 }
 
 results_cross_validation <- function(h2o_model) {
+  #' Get cross-validation results from model.
+  #'
+  #' @param h2o_model h2o model.
   h2o_model@model$cross_validation_metrics_summary %>% 
     as.data.frame() %>% 
     select(-mean, -sd) %>% 
@@ -100,6 +102,9 @@ results_cross_validation <- function(h2o_model) {
 }
 
 plot_results <- function(df_results) {
+  #' Get cross-validation results from model.
+  #'
+  #' @param h2o_model h2o model.  
   df_results %>% 
     gather(Metrics, Values) %>% 
     ggplot(aes(Metrics, Values, fill = Metrics, color = Metrics)) +
@@ -107,39 +112,8 @@ plot_results <- function(df_results) {
     theme(plot.margin = unit(c(1, 1, 1, 1), "cm")) +    
     scale_y_continuous(labels = scales::percent) + 
     facet_wrap(~ Metrics, scales = "free") + 
-    labs(title = "Model Performance by Some Criteria Selected", y = NULL)
+    labs(title = "Model Performance by Criteria Selected", y = NULL)
 }
-
-#=================================
-#  Generalized Linear Model
-#=================================
-
-h2o_glm <- h2o.glm(
-  x = predictors,
-  y = response,
-  training_frame = train_h2o,
-  family = "binomial",
-  lambda_search = T,
-  alpha = .5,
-  nfolds = 10,
-  seed = 123
-)
-
-# GLM, Diag
-
-summary(h2o_glm)
-
-h2o_glm@model$training_metrics@metrics$AUC
-
-h2o.varimp_plot(h2o_glm)
-
-# Submission
-
-export_results("glm", h2o_glm) # glm submission, 0.75119
-
-#=================================
-#  Random Forest
-#=================================
 
 as.numeric.factor <- function(x) as.numeric(levels(x))[x]
 
@@ -179,6 +153,59 @@ plot_performance <- function(perf) {
          subtitle = paste0("AUC Value: ", rf.auc$auc %>% round(2)))
 }
 
+#=================================
+#  Generalized Linear Model
+#=================================
+
+glm_hyper_params <- list( 
+  lambda = seq(0, 1, 0.01)
+)
+
+glm_search_criteria <- list(
+  strategy = "Cartesian"
+)
+
+glm_grid_id <- "glm_grid_1"
+
+system.time(glm_grid <- h2o.grid(
+  algorithm = "glm",
+  family = "binomial",
+  grid_id = glm_grid_id,
+  x = predictors,
+  y = response,
+  seed = 12345, 
+  nfolds = 10,
+  training_frame = train_h2o,
+  hyper_params = glm_hyper_params,
+  search_criteria = glm_search_criteria))
+
+glm_grid_perf <- h2o.getGrid(grid_id = glm_grid_id, 
+                          sort_by = "logloss",
+                          decreasing = FALSE)
+
+# Best GLM, ( lambda = 0 )
+
+glm_model_id <- glm_grid_perf@model_ids[[1]]
+glm_best <- h2o.getModel(glm_model_id)
+
+# GLM, Diag
+
+summary(glm_best)
+
+glm_best@model$training_metrics@metrics$logloss
+glm_best@model$training_metrics@metrics$AUC
+
+h2o.varimp_plot(glm_best)
+
+# get CV results
+results_cross_validation(glm_best) %>%
+  plot_results() +
+  labs(subtitle = "Model: Generalized Linear Model (Exaustive Lambda)")
+
+# Submission
+
+export_results("glm", glm_best) # glm submission, 0.75119
+
 #############################################
 # Base Random Forest
 #############################################
@@ -213,87 +240,54 @@ test_performance(rf_base) %>%
   plot_performance()
 
 #=================================
-#  Full Cartesian Grid Search
+#  Random Discrete Grid Search
 #=================================
 
 # Set hyperparameter grid: 
 
-hyper_grid.h2o <- list(ntrees = seq(50, 500, by = 50),
-                       mtries = seq(3, 5, by = 1),
-                       #max_depth = seq(10, 30, by = 10),
-                       #min_rows = seq(1, 3, by = 1),
-                       nbins = seq(20, 30, by = 10),
-                       sample_rate = c(0.55, 0.632, 0.75))
+rf_hyper_grid <- list(
+  ntrees = seq(50, 500, by = 50),
+  mtries = seq(3, 5, by = 1),
+  max_depth = seq(10, 30, by = 10),
+  min_rows = seq(1, 3, by = 1),
+  nbins = seq(20, 30, by = 10),
+  sample_rate = c(0.55, 0.632, 0.75))
 
 # The number of models is:
 sapply(hyper_grid.h2o, length) %>% prod()
 
-# Train 6000 Random Forest Models: 
-system.time(grid_cartesian <- h2o.grid(algorithm = "randomForest",
-                                       grid_id = "rf_grid1",
-                                       x = predictors, 
-                                       y = response, 
-                                       seed = 123, 
-                                       nfolds = 10, 
-                                       training_frame = frame.train,
-                                       stopping_metric = "logloss", 
-                                       hyper_params = hyper_grid.h2o,
-                                       search_criteria = list(strategy = "Cartesian")))
+rf_search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "logloss",
+  stopping_tolerance = 0.005,
+  stopping_rounds = 10,
+  max_runtime_secs = 60 * 5)
 
-# Collect the results and sort by our model performance metric of choice:
-grid_perf <- h2o.getGrid(grid_id = "rf_grid1", 
-                         sort_by = "logloss", 
-                         decreasing = FALSE)
+rf_grid_id <- "titanic_rf_grid_2"
 
-# Best model chosen by validation error: 
-rf_cartesian_best <- h2o.getModel(grid_perf@model_ids[[1]])
-
-summary(rf_cartesian_best)
-
-h2o.varimp_plot(rf_cartesian_best) # vip
-
-# get CV results
-results_cross_validation(rf_cartesian_best) %>%
-  plot_results() +
-  labs(subtitle = "Model: Random Forest (Best Cartesian)")
-
-# performance on test data
-test_performance(rf_cartesian_best) %>%
-  plot_performance()
-
-#=================================
-#  Random Discrete Grid Search
-#=================================
-
-# Set random grid search criteria: 
-search_criteria_2 <- list(strategy = "RandomDiscrete",
-                          stopping_metric = "logloss",
-                          stopping_tolerance = 0.005,
-                          stopping_rounds = 10,
-                          max_runtime_secs = 30*60)
-
-# Turn parameters for RF: 
-system.time(random_grid <- h2o.grid(algorithm = "randomForest",
-                                    grid_id = "rf_grid2",
-                                    x = predictors, 
-                                    y = response, 
-                                    seed = 29, 
-                                    nfolds = 10, 
-                                    training_frame = frame.train,
-                                    hyper_params = hyper_grid.h2o,
-                                    search_criteria = search_criteria_2))
+system.time(random_grid <- h2o.grid(
+  algorithm = "randomForest",
+  grid_id = rf_grid_id,
+  x = predictors, 
+  y = response, 
+  seed = 123456, 
+  nfolds = 10, 
+  training_frame = train_h2o,
+  hyper_params = rf_hyper_grid,
+  search_criteria = rf_search_criteria))
 
 # Collect the results and sort by our models: 
-grid_perf2 <- h2o.getGrid(grid_id = "rf_grid2", 
-                          sort_by = "logloss", 
-                          decreasing = FALSE)
+rf_grid_perf <- h2o.getGrid(
+  grid_id = rf_grid_id, 
+  sort_by = "logloss", 
+  decreasing = FALSE)
 
 # Best RF:
-rf_random_best <- h2o.getModel(grid_perf2@model_ids[[1]])
+rf_best <- h2o.getModel(rf_grid_perf@model_ids[[1]])
 
-summary(rf_random_best)
+summary(rf_best)
 
-h2o.varimp_plot(rf_random_best) # vip
+h2o.varimp_plot(rf_best)
 
 # get CV results
 results_cross_validation(rf_random_best) %>%
@@ -315,6 +309,158 @@ h2o.rf.results <- data.table(PassengerId = test$PassengerId,
 
 data.table::fwrite(h2o.glm.results, file = file.path(submission.dir, "h2o.rf.submission.csv"))
 
+
+#############################################
+# Gradient Boosting Machine
+#############################################
+
+# Define GBM hyperparameter grid
+hyper_grid <- list(
+  #learning_rate = c(0.01, 0.02, 0.05),
+  #sample_rate = c(0.5, 0.75, 1),
+  ntrees = c(2500, 3000, 5000),
+  sample_rate = c(.9, 1),
+  col_sample_rate = c(0.8, 0.9, 1),
+  col_sample_rate_per_tree = c(0.75, 0.85, 1)
+)
+
+# Define random grid search criteria
+search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "logloss",
+  stopping_tolerance = 0.001,
+  stopping_rounds = 10,
+  max_runtime_secs = 60 * 10
+)
+
+gbm_grid_id <- "titanic_gbm_grid_2"
+
+# Build random grid search 
+random_grid <- h2o.grid(
+  algorithm = "gbm", 
+  grid_id = gbm_grid_id, 
+  x = predictors, 
+  y = response,
+  training_frame = train_h2o, 
+  hyper_params = hyper_grid,
+  search_criteria = search_criteria, 
+  stopping_metric = "logloss",
+  stopping_rounds = 10, 
+  stopping_tolerance = 0, 
+  nfolds = 10, 
+  fold_assignment = "Modulo", 
+  keep_cross_validation_predictions = TRUE,
+  seed = 123
+)
+
+gbm_grid_perf <- h2o.getGrid(
+  grid_id = gbm_grid_id,
+  sort_by = "logloss",
+  decreasing = F
+)
+
+gbm_random_best_id <- gbm_grid_perf@model_ids[[1]]
+gbm_random_best <- h2o.getModel(gbm_random_best_id)
+
+# GBM Perf
+
+summary(gbm_random_best)
+
+h2o.varimp_plot(gbm_random_best) # vip
+
+# get CV results
+results_cross_validation(gbm_random_best) %>%
+  plot_results() +
+  labs(subtitle = "Model: GBM (Best Random)")
+
+# performance on test data
+test_performance(rf_random_best) %>%
+  plot_performance()
+
+export_results("gbm", gbm_random_best)
+
+#=================================
+# XG Boost
+#=================================
+
+xgb_hyper_grid <- list(
+  # learning_rate = c(0.01, 0.02, 0.05),
+  sample_rate = c(0.5, 0.75, 1),
+  ntrees = c(10000),
+  col_sample_rate = seq(0.75, 1, 0.05),
+  col_sample_rate_per_tree = seq(0.75, 1, 0.05),
+  max_depth = c(1, 2, 3, 4), 
+  min_rows = c(1, 2, 3, 4)
+)
+
+xgb_search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "logloss",
+  stopping_tolerance = 0.00001,
+  stopping_rounds = 10,
+  max_models = 25,
+  max_runtime_secs = 60 * 1
+)
+
+xgb_grid_id <- "titanic_xgb_grid_1"
+
+xgb_random_grid <- h2o.grid(
+  algorithm = "xgboost", 
+  grid_id = xgb_grid_id, 
+  x = predictors, 
+  y = response,
+  training_frame = train_h2o, 
+  hyper_params = xgb_hyper_grid,
+  # max_depth = 3,
+  # min_rows = 3,
+  search_criteria = xgb_search_criteria, 
+  stopping_metric = "logloss",
+  stopping_rounds = 10, 
+  stopping_tolerance = 0, 
+  nfolds = 10,
+  fold_assignment = "Modulo", 
+  keep_cross_validation_predictions = TRUE,
+  seed = 123
+)
+
+xgb_grid_perf <- h2o.getGrid(
+  grid_id = xgb_grid_id,
+  sort_by = "logloss",
+  decreasing = F
+)
+
+xgb_grid_perf
+
+xgb_random_best_id <- xgb_grid_perf@model_ids[[1]]
+xgb_random_best <- h2o.getModel(xgb_random_best_id)
+
+# XGB Perf
+
+summary(xgb_random_best)
+
+h2o.varimp_plot(xgb_random_best) # vip
+
+# get CV results
+results_cross_validation(xgb_random_best) %>%
+  plot_results() +
+  labs(subtitle = "Model: XGB (Best Random)")
+
+# performance on test data
+test_performance(rf_random_best) %>%
+  plot_performance()
+
+export_results("xgb", xgb_random_best) # 0.76555
+
+#=================================
+#  Stacked
+#=================================
+
+data.frame(
+  GLM_pred = as.vector(h2o.getFrame(best_glm@model$cross_validation_holdout_predictions_frame_id$name)),
+  RF_pred = as.vector(h2o.getFrame(best_rf@model$cross_validation_holdout_predictions_frame_id$name)),
+  GBM_pred = as.vector(h2o.getFrame(best_gbm@model$cross_validation_holdout_predictions_frame_id$name)),
+  XGB_pred = as.vector(h2o.getFrame(best_xgb@model$cross_validation_holdout_predictions_frame_id$name))
+) %>% cor()
 
 #=================================
 #  Auto ML
@@ -360,7 +506,7 @@ test_performance(h2o_top_auto) %>%
   plot_performance()
 
 # get submission
-export_results("auto", h2o_top_auto)
+export_results("auto", h2o_top_auto) # .76076
 
 ### All done, shutdown H2O    
 h2o.shutdown(prompt=FALSE)
