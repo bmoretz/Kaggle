@@ -4,12 +4,6 @@ library(dplyr)
 library(tidyverse)
 library(skimr)
 
-# Plotting
-library(GGally)
-
-# Feature Engineering
-library(recipes)
-
 # Resampling & Modeling
 library(rsample)
 library(caret)
@@ -53,56 +47,6 @@ create_submission <- function(name, model, data) {
   print(paste0("Created file:", file))
 }
 
-# data sets
-project <- 'titanic'
-
-data.dir <- file.path(here::here(), project, 'datasets'); submission.dir <- file.path(data.dir, "submission")
-
-train <- data.table::fread(file.path(data.dir, "train.csv"), 
-                           stringsAsFactors = T)
-
-test <- data.table::fread(file.path(data.dir, "test.csv"),
-                          stringsAsFactors = T)
-
-# Initial Split
-
-titanic.split <- initial_split(train, 
-                               prop = .7,
-                               strata = "Survived")
-
-titanic.train <- training(titanic.split)
-titanic.test <- testing(titanic.split)
-
-# eda
-
-train %>% skim()
-
-ggplot(titanic.train, aes(Fare)) +
-  geom_histogram(aes(fill = ..count..), bins = 30)
-
-train[Fare > 3 * sd(Fare)]
-
-ggplot(titanic.train, aes())
-
-missing.age <- titanic.train[is.na(Age),]
-
-nrow(titanic.train) / nrow(missing.age) # 5% missing age
-
-missing.age[, .(Missing = .N, Pct = .N / nrow(missing.age)),
-            by = Sex] # 70% male, 30% female
-
-ggplot(titanic.train[Cabin != ""], aes(Cabin)) +
-  geom_bar()
-
-numeric.cols <- colnames(titanic.train)[sapply(titanic.train, is.numeric)]
-
-ggpairs(titanic.train[, ..numeric.cols])
-
-ggplot(titanic.train, aes(Survived, Age, group = Survived)) +
-  geom_boxplot(aes(fill = Survived))
-
-ggplot(titanic.train, aes(Embarked)) +
-  geom_bar(aes(fill = ..count..))
 
 # Data Recipe
 recipe <- recipe(Survived ~ Sex + Age + Pclass + Cabin + Parch + Embarked + Fare + PassengerId, data = titanic.train) %>%
