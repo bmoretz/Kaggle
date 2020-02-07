@@ -64,6 +64,15 @@ origin_tbl %>% chisq.test() # p-value < 0.001
 
 origin_tbl %>% prop.table() %>% round(2)
 
+# Cabin Number
+
+ggplot(titanic, aes(CabinNumber)) +
+  geom_histogram() +
+  facet_wrap(~Survived, nrow = 2)
+
+ggplot(titanic, aes(Survived, CabinNumber)) +
+  geom_boxplot(aes(fill = Survived))
+
 # Fare
 
 ggplot(titanic, aes(Fare)) +
