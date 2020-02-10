@@ -6,6 +6,30 @@ library(GGally)
 library(skimr)
 
 #=================================
+#  Utility
+#=================================
+
+set_global_theme <- function()
+{
+  # Base Theme
+  theme_set(theme_light())
+  
+  # Theme Overrides
+  theme_update(axis.text.x = element_text(size = 10),
+               axis.text.y = element_text(size = 10),
+               plot.title = element_text(hjust = 0.5, size = 16, face = "bold", color = "darkgreen"),
+               axis.title = element_text(face = "bold", size = 12, colour = "steelblue4"),
+               plot.subtitle = element_text(face = "bold", size = 8, colour = "darkred"),
+               legend.title = element_text(size = 12, color = "darkred", face = "bold"),
+               legend.position = "right", legend.title.align=0.5,
+               panel.border = element_rect(linetype = "solid", 
+                                           colour = "lightgray"), 
+               plot.margin = unit(c( 0.1, 0.1, 0.1, 0.1), "inches"))
+  
+  print('Global Theme Set.')
+}
+
+#=================================
 #  Raw Data
 #=================================
 
@@ -36,17 +60,17 @@ update_ticket_info <- function(data) {
   suppressWarnings({
     # warnings by design
     tickets[, numeric := as.numeric(as.character(Ticket))]
+    
+    ticket_info <- tickets %>%
+      mutate(numbers = str_extract(Ticket, "(\\s)+(.)+[0-9]+")) %>%
+      mutate(prefix = str_replace(Ticket, numbers, "")) %>%
+      mutate(prefix_group = str_replace_all(prefix, "\\.", "")) %>%
+      separate(prefix_group, c("Origin", "Arrive")) %>%
+      mutate(TicketNumber = coalesce(as.numeric(numbers), numeric)) %>%
+      mutate(Origin = as.factor(Origin),
+             Arrive = as.factor(Arrive)) %>%
+      as.data.table()
   })
-  
-  ticket_info <- tickets %>%
-    mutate(numbers = str_extract(Ticket, "(\\s)+(.)+[0-9]+")) %>%
-    mutate(prefix = str_replace(Ticket, numbers, "")) %>%
-    mutate(prefix_group = str_replace_all(prefix, "\\.", "")) %>%
-    separate(prefix_group, c("Origin", "Arrive")) %>%
-    mutate(TicketNumber = coalesce(as.numeric(numbers), numeric)) %>%
-    mutate(Origin = as.factor(Origin),
-           Arrive = as.factor(Arrive)) %>%
-    as.data.table()
   
   ticket_info[is.na(Origin)]$Origin <- "None"
   ticket_info[is.na(Arrive)]$Arrive <- "None"

@@ -3,6 +3,8 @@ library(tidyverse)
 project <- 'titanic'
 source(file.path(project, "blueprint.R"))
 
+set_global_theme()
+
 data <- data_raw() %>%
   data_preprocessed()
 
@@ -16,6 +18,11 @@ numeric.cols <- colnames(titanic)[sapply(titanic, is.numeric)]
 ggpairs(titanic[, ..numeric.cols])
 
 titanic %>% skim()
+
+titanic[, .(Pct = .N/nrow(titanic)), Survived]
+
+ggplot(titanic, aes(Pclass, Survived, color = Sex)) +
+  stat_ecdf()
 
 # Is cabin area statistically significant?
 
@@ -74,6 +81,13 @@ ggplot(titanic, aes(Survived, CabinNumber)) +
   geom_boxplot(aes(fill = Survived))
 
 # Fare
+
+ggplot(titanic, aes(Sex, Fare, fill = Sex)) +
+  geom_boxplot()
+
+ggplot(titanic, aes(Fare, Survived)) +
+  stat_ecdf() +
+  facet_wrap(~Sex, nrow = 2)
 
 ggplot(titanic, aes(Fare)) +
   geom_histogram(aes(fill = ..count..), bins = 30)
