@@ -75,8 +75,6 @@ test_performance(glm_top_gs) %>%
 test_confusion(glm_top_gs) %>% 
   plot_confusion()
 
-export_results("glm.elasticnet", glm_top_gs)
-
 #=================================
 # Best Generalized Linear Models
 #=================================
@@ -93,7 +91,6 @@ export_results("glm.elasticnet", glm_top_gs)
 # alpha = 0.019, lamba = 0.01
 # perf: 0.77511
 
-# Keep Best Configuraion
 best_glm_id = "best_glm_h2o"
 
 best_glm <- h2o.glm(

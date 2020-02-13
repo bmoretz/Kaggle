@@ -12,18 +12,17 @@ project <- 'titanic'
 source(file.path(project, "blueprint.R"))
 
 load_titanic_data <- function(split_ratio = .8) {
-
+  
   data <- data_raw() %>%
     data_preprocessed() %>%
     data_processed()
   
   splits <- data$train %>% 
     as.h2o() %>%
-    h2o.splitFrame(. , ratios = c(split_ratio - .1, 1 - split_ratio), seed = 12345)
+    h2o.splitFrame(. , ratios = c(split_ratio), seed = 12345)
   
   train_h2o <<- splits[[1]]
-  valid_h2o <<- splits[[2]]
-  test_h2o <<- splits[[3]]
+  test_h2o <<- splits[[2]]
   
   competition_h2o <<- data$test %>%
     as.h2o()
